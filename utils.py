@@ -5,23 +5,35 @@ import matplotlib.pyplot as plt
 from PIL import Image
 from skimage import filters
 
-def make_octave(input, level, sigma, k):
-	if level == 0:
-		return []
-	else:
-		w, h = input.shape[:2]
-		gaued = input.copy()
-		gaued = ndimage.filters.gaussian_filter(input, sigma)
-		return [gaued] + make_octave(input, level-1, sigma * k, k)
+def make_pyramid(image, pyramid_depth, octave_depth, init_sigma, k):
+	pyramids = [[]]
+	sigma = init_sigma
+	current_h, current_w = image.shape[:2]
 
-def make_pyramid(input, depth, octave_level, sigma):
-	if depth == 0:
-		return []
-	else:
-		current_layer = make_octave(input, octave_level, sigma, 2 ** 0.5)
-		h, w = input.shape[:2]
-		downsample = cv2.resize(input, (w // 2, h // 2))
-		return [current_layer] + make_pyramid(downsample, depth - 1, octave_level, sigma * 2)
+	# first pyramid
+	for first in range(octave_depth):
+		gaued = image.copy()
+		gaued = ndimage.filters.gaussian_filter(gaued, sigma)
+		pyramids[-1].append(gaued)
+		sigma *= k
+	pyramids[-1] = np.array(pyramids[-1])
+
+	# first S were downsample from previous layer, other were create by gaussian
+	for p_depth in range(1, pyramid_depth):
+		current_w, current_h = current_w // 2, current_h//2
+		image = cv2.resize(image, (current_w, current_h))
+		pyramids.append([])
+		sigma = init_sigma * (2 ** p_depth)
+		for o_depth in range(octave_depth):
+			if o_depth < 3:
+				pyramids[-1].append(cv2.resize(pyramids[-2][-3+o_depth], (current_w, current_h)))
+			else:
+				gaued = image.copy()
+				gaued = ndimage.filters.gaussian_filter(gaued, sigma)
+				pyramids[-1].append(gaued)
+			sigma *= k
+		pyramids[-1] = np.array(pyramids[-1])
+	return pyramids
 
 def DoG(pyramid, depth, octave_level):
 	output = []
@@ -35,36 +47,50 @@ def DoG(pyramid, depth, octave_level):
 
 def find_extreme(dog_pyramid, depth, octave_level, contrast_threshold):
 	keypoints = []
+	minmax_x, minmax_y = [], []
 	for pyramid_index in range(depth):
 		
 		w, h = dog_pyramid[pyramid_index][0].shape[:2]
 		for octave_index in range(1, octave_level-2):
-			min_map = ndimage.minimum_filter(dog_pyramid[pyramid_index][octave_index-1:octave_index+2], size=(3, 3, 3))
-			min_map = (dog_pyramid[pyramid_index][octave_index] == min_map[1])
-			max_map = ndimage.maximum_filter(dog_pyramid[pyramid_index][octave_index-1:octave_index+2], size=(3, 3, 3))
-			max_map = (dog_pyramid[pyramid_index][octave_index] == max_map[1])
-			minmax_map = np.logical_or(min_map, max_map)
-			indexes = np.where(minmax_map == 1)
-			if not np.any(indexes[0]):
-				continue
-			minmax_x, minmax_y = indexes
+			for r in range(1, w-1):
+				for c in range(1, h-1):
+					extreme = False
+					cube = dog_pyramid[pyramid_index][octave_index][r-1:r+2, c-1:c+2]
+					center = cube[1, 1]
+					# print(cube.shape)
+					if np.all(center > cube[0]) and np.all(center > cube[2]) and center > cube[1, 0] and center > cube[1, 2]:
+						extreme = True
+					if np.all(center < cube[0]) and np.all(center < cube[2]) and center < cube[1, 0] and center < cube[1, 2]:
+						extreme = True
+					if extreme:
+						minmax_x.append(r)
+						minmax_y.append(c)
+			# min_map = ndimage.minimum_filter(dog_pyramid[pyramid_index][octave_index-1:octave_index+2], size=(3, 3, 3))
+			# min_map = (dog_pyramid[pyramid_index][octave_index] == min_map[1])
+			# max_map = ndimage.maximum_filter(dog_pyramid[pyramid_index][octave_index-1:octave_index+2], size=(3, 3, 3))
+			# max_map = (dog_pyramid[pyramid_index][octave_index] == max_map[1])
+			# minmax_map = np.logical_or(min_map, max_map)
+			# indexes = np.where(minmax_map == 1)
+			# if not np.any(indexes[0]):
+			# 	continue
+			# minmax_x, minmax_y = indexes
 			for index, (x, y) in enumerate(zip(minmax_x, minmax_y)):
-				# keypoints.append((pyramid_index, octave_index, x, y))
-				if x < w-1 and y < h-1 and x > 0 and y > 0:
-					point = localizedWithQuadraticFunction(pyramid_index, octave_index, x, y, w, h, octave_level, contrast_threshold)
-					if point:
-						keypoints.append(point)
+				keypoints.append((pyramid_index, octave_index, x, y))
+				# if x < w-1 and y < h-1 and x > 0 and y > 0:
+				# 	point = localizedWithQuadraticFunction(pyramid_index, octave_index, x, y, w, h, octave_level, contrast_threshold)
+				# 	if point:
+				# 		keypoints.append(point)
 	return keypoints
 
 def localizedWithQuadraticFunction(p_index, o_index, row_index, col_index, width, height, octave_level, contrast_threshold):
 
 	low_contrast, edge, out_of_index = False, False, False
 	counter = 0
-	while counter < 3:
+	while counter < 1:
 		cube = dog_pyramid[p_index][o_index-1:o_index+2, row_index-1:row_index+2, col_index-1:col_index+2]
 		gradient_map = gradientMatrix(cube)
 		hessian_map = hessianMatrix(cube)
-		offset = -np.linalg.lstsq(hessian_map, gradient_map, rcond=-1)[0]
+		offset = np.linalg.lstsq(hessian_map, -gradient_map, rcond=-1)[0]
 		if np.all(abs(offset) < 0.5):
 			break
 		else:
@@ -73,26 +99,20 @@ def localizedWithQuadraticFunction(p_index, o_index, row_index, col_index, width
 			o_index += int(offset[2])
 		counter += 1
 		if row_index <= 0 or col_index <= 0 or o_index <= 0 or row_index >= width-1 or col_index >= height-1 or o_index >= octave_level-2:
-			out_of_index = True
-			break
+			return None # outside the image
 
 	new_value = cube[1, 1, 1] + 0.5 * np.dot(gradient_map, offset)
-	if abs(new_value) * 3 < contrast_threshold:
-		low_contrast = True
+	if (new_value ** 2 / 3) < contrast_threshold:
+		return None # low contrast point
 	else:
 		hessian_trace = np.trace(hessian_map[:2, :2])
 		hessian_determine = np.linalg.det(hessian_map[:2, :2])
 		if hessian_determine == 0: 
 			return None
-		# print((hessian_trace ** 2) / hessian_determine)
-		if (hessian_trace ** 2) / hessian_determine < 12.1:
-			edge = False
-		else:
-			edge = True
-	if not low_contrast and not out_of_index and not edge:
-		return (p_index, o_index, row_index, col_index)
-	else:
-		return None
+		if (hessian_trace ** 2) / hessian_determine > 12.1:
+			return None # edge
+	return (p_index, o_index, row_index, col_index)
+	
 
 def gradientMatrix(cube):
 	dx = (cube[1, 1, 2] - cube[1, 1, 0]) / 2
@@ -107,7 +127,7 @@ def hessianMatrix(cube):
 	dyy = (cube[1, 0, 1] - 2 * center_pixel + cube[1, 2, 1])
 	dss = (cube[2, 1, 1] - 2 * center_pixel + cube[0, 1, 1])
 	dxy = (cube[1, 0, 2] - cube[1, 2, 2] - cube[1, 0, 0] + cube[1, 2, 0]) / 4
-	dxs = (cube[2, 1, 2] - cube[2, 1, 0] - cube[0, 1, 2] + cube[0, 1, 1]) / 4
+	dxs = (cube[2, 1, 2] - cube[2, 1, 0] - cube[0, 1, 2] + cube[0, 1, 0]) / 4
 	dys = (cube[2, 0, 1] - cube[2, 2, 1] - cube[0, 0, 1] + cube[0, 2, 1]) / 4
 	return np.array([[dxx, dxy, dxs],
 					 [dxy, dyy, dys],
@@ -118,16 +138,23 @@ if __name__ == '__main__':
 
 	image = cv2.imread('./test1.jpg')
 	image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-	image = image.astype(np.float32) / 255
+	image = image.astype(np.float32)
+	image_up = cv2.resize(image, (0, 0), fx=2, fy=2)
 
+	p = make_pyramid(image_up, 3, 6, 1.6, 2**(1/3))
 
-	octave_level = 5
-	depth = 2
-	pyramid = make_pyramid(image, depth=depth, octave_level=octave_level, sigma=1.6)
-	dog_pyramid = DoG(pyramid, depth=depth, octave_level=octave_level)
+	# octave_level = 5
+	# depth = 2
+	# pyramid = make_pyramid(image, depth=depth, octave_level=octave_level, sigma=1.6)
+	dog_pyramid = DoG(p, depth=3, octave_level=6)
 
-	keys = find_extreme(dog_pyramid, depth, octave_level, 0.03)
+	keys = find_extreme(dog_pyramid, 3, 6, 0.03)
 	
+	for k in keys:
+		p, o, r, w = k
+		if p == 1:
+			image[r, w] = 0
+
 	plt.imshow(image, cmap='gray')
 	plt.show()
 
