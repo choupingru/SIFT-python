@@ -4,6 +4,7 @@ from scipy import ndimage
 import matplotlib.pyplot as plt
 from PIL import Image
 from skimage import filters
+from matplotlib.patches import Circle
 
 def make_pyramid(image, pyramid_depth, octave_depth, init_sigma, k):
 	pyramids = [[]]
@@ -51,51 +52,32 @@ def find_extreme(dog_pyramid, depth, octave_level, contrast_threshold):
 	for pyramid_index in range(depth):
 		minmax_x, minmax_y = [], []	
 		w, h = dog_pyramid[pyramid_index][0].shape[:2]
-		for octave_index in range(1, octave_level-2):
-			for r in range(1, w-1):
-				for c in range(1, h-1):
-					extreme = False
-					cube = dog_pyramid[pyramid_index][octave_index][r-1:r+2, c-1:c+2]
-					center = cube[1, 1]
-					# print(cube.shape)
-					if np.all(center > cube[0]) and np.all(center > cube[2]) and center > cube[1, 0] and center > cube[1, 2]:
-						extreme = True
-					if np.all(center < cube[0]) and np.all(center < cube[2]) and center < cube[1, 0] and center < cube[1, 2]:
-						extreme = True
-					if extreme:
-						minmax_x.append(r)
-						minmax_y.append(c)
-
-			# min_map = ndimage.minimum_filter(dog_pyramid[pyramid_index][octave_index-1:octave_index+2], size=(3, 3, 3))
-			# min_map = (dog_pyramid[pyramid_index][octave_index] == min_map[1])
-			# max_map = ndimage.maximum_filter(dog_pyramid[pyramid_index][octave_index-1:octave_index+2], size=(3, 3, 3))
-			# max_map = (dog_pyramid[pyramid_index][octave_index] == max_map[1])
-			# minmax_map = np.logical_or(min_map, max_map)
-			# indexes = np.where(minmax_map == 1)
-			# if not np.any(indexes[0]):
-			# 	continue
-			# minmax_x, minmax_y = indexes
-		print(len(minmax_x))
 		cnt = 0
-		for (x, y) in zip(minmax_x, minmax_y):
-			# keypoints.append((pyramid_index, x, y))
-			if x < w-1 and y < h-1 and x > 0 and y > 0:
-				point = localizedWithQuadraticFunction(pyramid_index, octave_index, x, y, w, h, octave_level, contrast_threshold)
-				if point:
-					cnt += 1
-					keypoints.append(point)
-		print(cnt)
+		for octave_index in range(1, octave_level-2):
+			min_map = ndimage.minimum_filter(dog_pyramid[pyramid_index][octave_index-1:octave_index+2], size=(3, 3, 3))
+			min_map = (dog_pyramid[pyramid_index][octave_index] == min_map[1])
+			max_map = ndimage.maximum_filter(dog_pyramid[pyramid_index][octave_index-1:octave_index+2], size=(3, 3, 3))
+			max_map = (dog_pyramid[pyramid_index][octave_index] == max_map[1])
+			minmax_map = np.logical_or(min_map, max_map)
+			indexes = np.where(minmax_map == 1)
+			if not np.any(indexes[0]):
+				continue
+			minmax_x, minmax_y = indexes
+			for (x, y) in zip(minmax_x, minmax_y):
+				if x < w-1 and y < h-1 and x > 0 and y > 0:
+					point = localizedWithQuadraticFunction(pyramid_index, octave_index, x, y, w, h, octave_level, contrast_threshold)
+					if point:
+						keypoints.append(point)
 	return keypoints
 
 def localizedWithQuadraticFunction(p_index, o_index, row_index, col_index, width, height, octave_level, contrast_threshold):
 
-	low_contrast, edge, out_of_index = False, False, False
 	counter = 0
 	while counter < 5:
 		cube = dog_pyramid[p_index][o_index-1:o_index+2, row_index-1:row_index+2, col_index-1:col_index+2]
 		gradient_map = gradientMatrix(cube)
 		hessian_map = hessianMatrix(cube)
-		offset = -np.linalg.lstsq(hessian_map, gradient_map, rcond=-1)[0]
+		offset = np.linalg.lstsq(hessian_map, -gradient_map, rcond=-1)[0]
 		if np.all(abs(offset) < 0.5):
 			break
 		else:
@@ -105,9 +87,8 @@ def localizedWithQuadraticFunction(p_index, o_index, row_index, col_index, width
 		counter += 1
 		if row_index <= 0 or col_index <= 0 or o_index <= 0 or row_index >= width-1 or col_index >= height-1 or o_index >= octave_level-2:
 			return None # outside the image
-
-	new_value = cube[1, 1, 1] + 0.5 * np.dot(gradient_map, offset)
-	if (new_value ** 2 / 3) < contrast_threshold:
+	new_value = cube[1, 1, 1] + 0.5 * gradient_map @ offset
+	if abs(new_value)  < contrast_threshold:
 		return None # low contrast point
 	else:
 		hessian_trace = np.trace(hessian_map[:2, :2])
@@ -121,7 +102,7 @@ def localizedWithQuadraticFunction(p_index, o_index, row_index, col_index, width
 
 def gradientMatrix(cube):
 	dx = (cube[1, 1, 2] - cube[1, 1, 0]) / 2
-	dy = (cube[1, 0, 1] - cube[1, 2, 1]) / 2
+	dy = (cube[1, 2, 1] - cube[1, 0, 1]) / 2
 	ds = (cube[2, 1, 1] - cube[0, 1, 1]) / 2
 	return np.array([dx, dy, ds])
 
@@ -129,11 +110,11 @@ def hessianMatrix(cube):
 
 	center_pixel = cube[1, 1, 1]
 	dxx = (cube[1, 1, 2] - 2 * center_pixel + cube[1, 1, 0])
-	dyy = (cube[1, 0, 1] - 2 * center_pixel + cube[1, 2, 1])
+	dyy = (cube[1, 2, 1] - 2 * center_pixel + cube[1, 0, 1])
 	dss = (cube[2, 1, 1] - 2 * center_pixel + cube[0, 1, 1])
-	dxy = (cube[1, 0, 2] - cube[1, 2, 2] - cube[1, 0, 0] + cube[1, 2, 0]) / 4
+	dxy = (cube[1, 2, 2] - cube[1, 0, 2] - cube[1, 2, 0] + cube[1, 0, 0]) / 4
 	dxs = (cube[2, 1, 2] - cube[2, 1, 0] - cube[0, 1, 2] + cube[0, 1, 0]) / 4
-	dys = (cube[2, 0, 1] - cube[2, 2, 1] - cube[0, 0, 1] + cube[0, 2, 1]) / 4
+	dys = (cube[2, 2, 1] - cube[2, 0, 1] - cube[0, 2, 1] + cube[0, 0, 1]) / 4
 	return np.array([[dxx, dxy, dxs],
 					 [dxy, dyy, dys],
 					 [dxs, dys, dss]])
@@ -141,26 +122,33 @@ def hessianMatrix(cube):
 
 if __name__ == '__main__':
 
-	image = cv2.imread('./test1.jpg')
+	img = cv2.imread('lena.png')
+	gray= cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
+	sift = cv2.SIFT_create()
+	kp = sift.detect(gray,None)
+	img=cv2.drawKeypoints(gray,kp,img)
+	cv2.imwrite('sift_keypoints.png',img)
+
+
+	image = cv2.imread('./lena.png')
 	image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 	image = image.astype(np.float32)
+	image = (image - image.min()) / (image.max() - image.min())
 	image_up = cv2.resize(image, (0, 0), fx=2, fy=2)
 
 	p = make_pyramid(image_up, 3, 6, 1.6, 2**(1/3))
-
-	# octave_level = 5
-	# depth = 2
-	# pyramid = make_pyramid(image, depth=depth, octave_level=octave_level, sigma=1.6)
 	dog_pyramid = DoG(p, depth=3, octave_level=6)
-
 	keys = find_extreme(dog_pyramid, 3, 6, 0.03)
-	
+	fig,ax = plt.subplots(1)
+	ax.imshow(image, cmap='gray')
+
 	for k in keys:
 		p, _, r, c = k
 		if p == 1:
-			image[r, c] = 0
+			circ = Circle((c,r),3)
+			ax.add_patch(circ)
 
-	plt.imshow(image, cmap='gray')
+
 	plt.show()
 
 
