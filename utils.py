@@ -51,6 +51,7 @@ def find_extreme(dog_pyramid, depth, octave_level, contrast_threshold):
 	for pyramid_index in range(depth):
 		
 		w, h = dog_pyramid[pyramid_index][0].shape[:2]
+		print(w, h)
 		for octave_index in range(1, octave_level-2):
 			for r in range(1, w-1):
 				for c in range(1, h-1):
@@ -63,8 +64,14 @@ def find_extreme(dog_pyramid, depth, octave_level, contrast_threshold):
 					if np.all(center < cube[0]) and np.all(center < cube[2]) and center < cube[1, 0] and center < cube[1, 2]:
 						extreme = True
 					if extreme:
+						if pyramid_index == 1:
+							if c > 358:
+								print(c)
+							if r > 327:
+								print(r)
 						minmax_x.append(r)
 						minmax_y.append(c)
+
 			# min_map = ndimage.minimum_filter(dog_pyramid[pyramid_index][octave_index-1:octave_index+2], size=(3, 3, 3))
 			# min_map = (dog_pyramid[pyramid_index][octave_index] == min_map[1])
 			# max_map = ndimage.maximum_filter(dog_pyramid[pyramid_index][octave_index-1:octave_index+2], size=(3, 3, 3))
@@ -74,8 +81,8 @@ def find_extreme(dog_pyramid, depth, octave_level, contrast_threshold):
 			# if not np.any(indexes[0]):
 			# 	continue
 			# minmax_x, minmax_y = indexes
-			for index, (x, y) in enumerate(zip(minmax_x, minmax_y)):
-				keypoints.append((pyramid_index, octave_index, x, y))
+		for (x, y) in zip(minmax_x, minmax_y):
+			keypoints.append((pyramid_index, x, y))
 				# if x < w-1 and y < h-1 and x > 0 and y > 0:
 				# 	point = localizedWithQuadraticFunction(pyramid_index, octave_index, x, y, w, h, octave_level, contrast_threshold)
 				# 	if point:
@@ -151,9 +158,9 @@ if __name__ == '__main__':
 	keys = find_extreme(dog_pyramid, 3, 6, 0.03)
 	
 	for k in keys:
-		p, o, r, w = k
+		p, r, c = k
 		if p == 1:
-			image[r, w] = 0
+			image[r, c] = 0
 
 	plt.imshow(image, cmap='gray')
 	plt.show()
