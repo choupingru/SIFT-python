@@ -47,11 +47,10 @@ def DoG(pyramid, depth, octave_level):
 
 def find_extreme(dog_pyramid, depth, octave_level, contrast_threshold):
 	keypoints = []
-	minmax_x, minmax_y = [], []
+	
 	for pyramid_index in range(depth):
-		
+		minmax_x, minmax_y = [], []	
 		w, h = dog_pyramid[pyramid_index][0].shape[:2]
-		print(w, h)
 		for octave_index in range(1, octave_level-2):
 			for r in range(1, w-1):
 				for c in range(1, h-1):
@@ -64,11 +63,6 @@ def find_extreme(dog_pyramid, depth, octave_level, contrast_threshold):
 					if np.all(center < cube[0]) and np.all(center < cube[2]) and center < cube[1, 0] and center < cube[1, 2]:
 						extreme = True
 					if extreme:
-						if pyramid_index == 1:
-							if c > 358:
-								print(c)
-							if r > 327:
-								print(r)
 						minmax_x.append(r)
 						minmax_y.append(c)
 
@@ -81,23 +75,27 @@ def find_extreme(dog_pyramid, depth, octave_level, contrast_threshold):
 			# if not np.any(indexes[0]):
 			# 	continue
 			# minmax_x, minmax_y = indexes
+		print(len(minmax_x))
+		cnt = 0
 		for (x, y) in zip(minmax_x, minmax_y):
-			keypoints.append((pyramid_index, x, y))
-				# if x < w-1 and y < h-1 and x > 0 and y > 0:
-				# 	point = localizedWithQuadraticFunction(pyramid_index, octave_index, x, y, w, h, octave_level, contrast_threshold)
-				# 	if point:
-				# 		keypoints.append(point)
+			# keypoints.append((pyramid_index, x, y))
+			if x < w-1 and y < h-1 and x > 0 and y > 0:
+				point = localizedWithQuadraticFunction(pyramid_index, octave_index, x, y, w, h, octave_level, contrast_threshold)
+				if point:
+					cnt += 1
+					keypoints.append(point)
+		print(cnt)
 	return keypoints
 
 def localizedWithQuadraticFunction(p_index, o_index, row_index, col_index, width, height, octave_level, contrast_threshold):
 
 	low_contrast, edge, out_of_index = False, False, False
 	counter = 0
-	while counter < 1:
+	while counter < 5:
 		cube = dog_pyramid[p_index][o_index-1:o_index+2, row_index-1:row_index+2, col_index-1:col_index+2]
 		gradient_map = gradientMatrix(cube)
 		hessian_map = hessianMatrix(cube)
-		offset = np.linalg.lstsq(hessian_map, -gradient_map, rcond=-1)[0]
+		offset = -np.linalg.lstsq(hessian_map, gradient_map, rcond=-1)[0]
 		if np.all(abs(offset) < 0.5):
 			break
 		else:
@@ -158,7 +156,7 @@ if __name__ == '__main__':
 	keys = find_extreme(dog_pyramid, 3, 6, 0.03)
 	
 	for k in keys:
-		p, r, c = k
+		p, _, r, c = k
 		if p == 1:
 			image[r, c] = 0
 
