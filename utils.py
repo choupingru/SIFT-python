@@ -65,12 +65,12 @@ def find_extreme(dog_pyramid, depth, octave_level, contrast_threshold):
 			minmax_x, minmax_y = indexes
 			for (x, y) in zip(minmax_x, minmax_y):
 				if x < w-1 and y < h-1 and x > 0 and y > 0:
-					point = localizedWithQuadraticFunction(pyramid_index, octave_index, x, y, w, h, octave_level, contrast_threshold)
+					point = localizedQuadratic(dog_pyramid, pyramid_index, octave_index, x, y, w, h, octave_level, contrast_threshold)
 					if point:
 						keypoints.append(point)
 	return keypoints
 
-def localizedWithQuadraticFunction(p_index, o_index, row_index, col_index, width, height, octave_level, contrast_threshold):
+def localizedQuadratic(dog_pyramid, p_index, o_index, row_index, col_index, width, height, octave_level, contrast_threshold):
 
 	counter = 0
 	while counter < 5:
@@ -97,8 +97,31 @@ def localizedWithQuadraticFunction(p_index, o_index, row_index, col_index, width
 			return None
 		if (hessian_trace ** 2) / hessian_determine > 12.1:
 			return None # edge
-	return (p_index, o_index, row_index, col_index)
+	return (p_index, o_index, 1.6 * (2 ** p_index) * (2 ** (o_index/3)), row_index, col_index)
 	
+def keypointDescriptor(dog_pyramid, keypoint, window_size=8):
+	p_index, o_index, sigma, x, y = point
+	x, y = x * (2 ** (-1 + p_index)), y * (2 ** (-1 + p_index))
+	sigma = 1.6 * (2 ** p) * (2 **(o_index / 3))
+	weight = 1 / (sigma**2)
+	image = dog_pyramid[p_index][o_index]
+	features_36 = []
+	for i in range(-window_size, window_size):
+		for j in range(-window_size, window_size):
+			magnitude = ((image[i+x+1, j+y] - image[i+x-1, j+y]) ** 2 + (image[i+x, j+y+1] - image[i+x, j+y-1]) ** 2) ** 0.5
+			angle = (np.degrees(np.arctan((image[i+x, j+y+1] - image[i+x, j+y-1]) / (image[i+x+1, j+y] - image[i+x-1, j+y]))) + 360) % 360
+			weight = weight * np.exp(-(i**2 + j**2) / (sigma ** 2)) / (1.5 * window_size * 2)
+			angle_bins = [0] * 36
+			angle_bins[angle // 10] += weight * magnitude
+			features_36.append(angle_bins)
+	features_36 = np.array(features_36)
+	features_8 = []
+	for i in range(0, window_size*2, window_size//2):
+		for j in range(0, window_size*2, window_size//2):
+			region = features_36[i:i+window_size//2, j:j+window_size//2]
+			########### 8 bins feature
+	return angle_bins
+
 
 def gradientMatrix(cube):
 	dx = (cube[1, 1, 2] - cube[1, 1, 0]) / 2
@@ -122,31 +145,24 @@ def hessianMatrix(cube):
 
 if __name__ == '__main__':
 
-	img = cv2.imread('lena.png')
-	gray= cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
-	sift = cv2.SIFT_create()
-	kp = sift.detect(gray,None)
-	img=cv2.drawKeypoints(gray,kp,img)
-	cv2.imwrite('sift_keypoints.png',img)
-
-
 	image = cv2.imread('./lena.png')
 	image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 	image = image.astype(np.float32)
 	image = (image - image.min()) / (image.max() - image.min())
 	image_up = cv2.resize(image, (0, 0), fx=2, fy=2)
 
-	p = make_pyramid(image_up, 3, 6, 1.6, 2**(1/3))
-	dog_pyramid = DoG(p, depth=3, octave_level=6)
-	keys = find_extreme(dog_pyramid, 3, 6, 0.03)
+	pyramid = make_pyramid(image_up, 3, 6, 1.6, 2**(1/3))
+	dog = DoG(pyramid, depth=3, octave_level=6)
+	keys = find_extreme(dog, 3, 6, 0.05)
 	fig,ax = plt.subplots(1)
 	ax.imshow(image, cmap='gray')
 
 	for k in keys:
-		p, _, r, c = k
-		if p == 1:
-			circ = Circle((c,r),3)
-			ax.add_patch(circ)
+		p, _, _, r, c = k
+		
+		c, r = c * (2**(-1+p)), r * (2**(-1+p))
+		circ = Circle((c,r),3)
+		ax.add_patch(circ)
 
 
 	plt.show()
